@@ -1,4 +1,5 @@
 local socket = require("socket")
+dofile("util.lua")
 local server = {}
 
 function server:start()
@@ -19,6 +20,7 @@ function server:accept_player()
   else
     self.players[1] = {}
     self.players[1].client = player
+    self.players[1].client:send("waiting for another player\n")
     return self:accept_player()
   end
 end
@@ -33,11 +35,7 @@ end
 function server:game_starts()
   self:deal()
   sleep(2.9)
-  return self:game_started()
-end
-
-function sleep(sec)
-  socket.select(nil,nil,sec)
+  return self:game()
 end
 
 function server:deal()
@@ -87,24 +85,61 @@ function server:pop_deck(player)
   return card
 end
 
-function server:game_started()
-  for k, player in ipairs(self.players) do
-    local data = "hand:"
-    for i = 1, 4 do
-      data = data .. " " .. player.hand[i]
-    end
-    player.client:send(data .. "\n")
-    data = "deck:"
-    for i = 1, player.decksize do
-      data = data .. " " .. player.deck[i]
-    end
-    player.client:send(data .. "\n")
-    sleep(60)
-    player.client:close()
+function server:game()
+  print("game started\n")
+  for k,player in ipairs(self.players) do
+    player.client:send("game started\n")
   end
-  self.players[1] = nil
-  self.players[2] = nil
+  while self.players[1] and self.players[2] do
+    for k, player in ipairs(self.players) do
+      local data, err = self:receive_command(player)
+      if err~= "closed" then
+        if err == nil then
+          self:send_command(player,data)
+          self:send_command(self:opposite(k),data)
+        end
+      else
+        self.players[k] = nil
+      end 
+    end
+  end
+  for i=1,2 do
+    if self.players[1] then
+      self.players[1]:close()
+      self.players[1] = nil
+    end
+    if self.players[2] then
+      self.players[2]:close()
+      self.players[2] = nil
+    end
+  end
   return self:accept_player()
+end
+
+function server:send_command(player,data)
+  player.client:send(table.concat(data," ") .. "\n")
+  print("sent: " .. table.concat(data, " ") .. "\n")
+end
+
+function server:receive_command(player,data)
+  local client = player.client
+  client:settimeout(10)
+  local data, err = client:receive("*l")
+  client:settimeout(0)
+  if err then
+    return nil, err
+  else
+    print("received: " .. data)
+    return data:split(" ")
+  end
+end
+
+function server:opposite(index)
+  if index == 1 then
+    return self.players[2]
+  else
+    return self.players[1]
+  end
 end
 
 --[[
